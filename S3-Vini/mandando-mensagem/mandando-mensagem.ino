@@ -1,54 +1,94 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 
-WiFiClient wifi_client;
+WiFiClientSecure wifi_client;
 PubSubClient mqtt(wifi_client);
 
-const String SSID = "FIESC_IOT_EDU";
-const String PASS = "8120gv08";
+const char* SSID = "FIESC_IOT_EDU";
+const char* PASS = "8120gv08";
 
-const String brokerURL = "test.mosquitto.org";
-const int brokerPort = 1883;
-const String topic = "vinicius";
+const char* brokerURL = "bbfdabd6c614412b9e57017649d99508.s1.eu.hivemq.cloud";
+const int brokerPort = 8883;
 
-const String brokerUser = "";
-const String brokerPass = "";
+const char* topicPub = "testeMensagem";
+const char* topicSub = "viniciusGordoNojento";
+
+const char* brokerUser = "baierski_melhor_de_todos"; 
+const char* brokerPass = "Felipe19122007";
+
+int pinoPIR = 23;   // Pino do sensor PIR
+int pinoLED = 2;    // Pino do LED
+int valor = 0;      // Guarda o valor do sensor
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String mensagem = "";
+  for (int i = 0; i < length; i++) {
+    mensagem += (char)payload[i];
+  }
+  Serial.print("Mensagem recebida [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  Serial.println(mensagem);
+}
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);           // Inicia comunicação serial
   WiFi.begin(SSID, PASS);
-  Serial.println("Concetando no Wifi");
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("conectado com o wifi com sucesso");
+  while(WiFi.status() != WL_CONNECTED){
     Serial.print(".");
-    delay(200);
+    delay(500);
   }
-  Serial.println("Conectado com sucesso!");
-  mqtt.setServer(brokerURL.c_str(), brokerPort);
-  String clientID = "S4-";
-  clientID += String(random(0xffff), HEX);
-  while (mqtt.connect(clientID.c_str()) == 0) {
-    Serial.print(".");
-    delay(200);
-  }
-  mqtt.subscribe(topic.c_str());
+
+  Serial.println("wifi conectado");
+
+  wifi_client.setInsecure();
+  mqtt.setServer(brokerURL, brokerPort);
   mqtt.setCallback(callback);
-  Serial.println("\nConectado ao broker!");
+
+  Serial.println("conectado ao mqtt");
+
+  pinMode(pinoPIR, INPUT);        // Configura o PIR como entrada
+  pinMode(pinoLED, OUTPUT);       // Configura o LED como saída
+  Serial.println("Sensor e LED prontos!");
+
+  Serial.print("Conectando ao broker MQTT");
+  while (!mqtt.connect("S4-Cliente", brokerUser, brokerPass)) {
+    Serial.print(".");
+    delay(500);
+  }
+  mqtt.subscribe(topicSub);
+  Serial.println("\nConectado ao HiveMQ Cloud!");
 }
 
 void loop() {
-  String mensagem = "";
-  if(Serial.available() > 0){
-    mensagem = Serial.readStringUntil('\n');
-    mensagem = "Vinicius: " + mensagem;
-    mqtt.publish("mariah",mensagem.c_str());
+
+  valor = digitalRead(pinoPIR); // Lê o valor do sensor
+  if (valor == HIGH) {            // Se detectar movimento
+    digitalWrite(pinoLED, HIGH);  // Acende o LED
+    enviarParaHiveClound("Movimento detectado!");
+  } else {                        // Se não detectar movimento
+    digitalWrite(pinoLED, LOW);   // Apaga o LED
+    Serial.println("Sem movimento... LED apagado.");
+    enviarParaHiveClound("Movimento não detectado!");
   }
-  mqtt.loop();
+
+  delay(500);
+  
+   // Espera meio segundo antes de repetir
 }
 
-void callback(char* topic, byte* payload, unsigned long length){
-    String MensagemRecebida = "";
-    for(int i = 0; i < length; i++){
-      MensagemRecebida += (char) payload[i];
+void enviarParaHiveClound(String dado){
+ if (!mqtt.connected()) {
+    Serial.println("Reconectando ao broker...");
+    while (!mqtt.connect("S4-Cliente", brokerUser, brokerPass)) {
+      delay(1000);
     }
-    Serial.println(MensagemRecebida);
+  }
+
+  mqtt.loop();
+
+  String mensagem = "Vinicius dados: " + dado;
+  mqtt.publish(topicPub, mensagem.c_str());
 }
