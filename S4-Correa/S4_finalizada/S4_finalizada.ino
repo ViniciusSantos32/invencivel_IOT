@@ -87,9 +87,5 @@ void loop() {
   if (!client.connected()) mqttReconnect();
   client.loop();
 
-  if (millis() - ultimoMomentoMensagem > TIMEOUT_SEM_MENSAGEM) {
-    // Sem mensagem → LED vermelho ACESO
-    digitalWrite(LED_VERDE, HIGH);    // Apaga verde
-    digitalWrite(LED_VERMELHO, LOW);  // Acende vermelho
-  }
+  
 }
