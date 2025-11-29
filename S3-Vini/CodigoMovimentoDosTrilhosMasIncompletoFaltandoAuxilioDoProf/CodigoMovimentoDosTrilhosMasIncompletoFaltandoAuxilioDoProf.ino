@@ -1,4 +1,4 @@
-#include <WiFi.h>
+#include <WiFi.h> 
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ESP32Servo.h>
@@ -13,73 +13,67 @@ const int brokerPort = 8883;
 const char* brokerUser = "baierski_melhor_de_todos";
 const char* brokerPass = "Felipe19122007";
 
-// ------------------- PINOS --------------------
-#define TRIGGER_PIN 5
-#define ECHO_PIN 18
-
-#define SERVO1_PIN 21
-#define SERVO2_PIN 19
-
-#define LDR_PIN 36   // A0 (sensor de iluminação)
-
-// ------------------- OBJETOS --------------------
+// ---------- SERVOS ----------
 Servo servo1;
 Servo servo2;
+
+#define SERVO1_PIN 12
+#define SERVO2_PIN 14
+
+// ---------- ULTRASSÔNICO ----------
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+const int limiteDistancia = 20;
+
+// ---------- LED ----------
+#define LED_PIN 27
+
+// ---------- MQTT ----------
 WiFiClientSecure wifi_client;
 PubSubClient mqtt(wifi_client);
 
-// ------------------- FUNÇÃO: ULTRASSÔNICO --------------------
-long readUltrasonic() {
-  digitalWrite(TRIGGER_PIN, LOW);
-  delayMicroseconds(5);
-  digitalWrite(TRIGGER_PIN, HIGH);
+// Comando remoto vindo da S2
+int comandoS2 = 0;
+
+// ----------- Medir distância -----------
+long medirDistancia() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIGGER_PIN, LOW);
+  digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-  long distance = duration * 0.034 / 2;
+  long duracao = pulseIn(ECHO_PIN, HIGH, 25000);
+  if (duracao == 0) return -1;
 
-  return distance;
+  return (duracao * 0.034 / 2);
 }
 
-// ------------------- CALLBACK MQTT --------------------
+// ----------- CALLBACK MQTT -----------
 void callback(char* topic, byte* message, unsigned int length) {
-  String received = "";
-  for (unsigned int i = 0; i < length; i++) {
-    received += (char)message[i];
+  String msg = "";
+  for (int i = 0; i < length; i++) msg += (char)message[i];
+
+  if (String(topic) == "S3/ComandoMovimento") {
+    comandoS2 = msg.toInt();
   }
 
-  Serial.print("Mensagem recebida em ");
-  Serial.print(topic);
-  Serial.print(": ");
-  Serial.println(received);
-
-  if (String(topic) == "S3/Servo1") {
-    int ang = received.toInt();
-    servo1.write(ang);
-  }
-
-  if (String(topic) == "S3/Servo2") {
-    int ang = received.toInt();
-    servo2.write(ang);
-  }
+  if (String(topic) == "S3/Servo1") servo1.write(msg.toInt());
+  if (String(topic) == "S3/Servo2") servo2.write(msg.toInt());
 }
 
-// ------------------- RECONNECT MQTT --------------------
+// ----------- Reconectar MQTT -----------
 void reconnectMQTT() {
   while (!mqtt.connected()) {
-    Serial.println("Conectando ao MQTT...");
-
     if (mqtt.connect("S3_Node", brokerUser, brokerPass)) {
-      Serial.println("Conectado!");
 
       mqtt.subscribe("S3/Servo1");
       mqtt.subscribe("S3/Servo2");
+      mqtt.subscribe("S3/ComandoMovimento"); // comando da S2
 
     } else {
-      Serial.print("Falha MQTT, rc=");
-      Serial.println(mqtt.state());
-      delay(1500);
+      delay(5000);
     }
   }
 }
@@ -88,48 +82,46 @@ void reconnectMQTT() {
 void setup() {
   Serial.begin(115200);
 
-  // Servos
-  servo1.attach(SERVO1_PIN);
-  servo2.attach(SERVO2_PIN);
+  servo1.attach(SERVO1_PIN, 500, 2400);
+  servo2.attach(SERVO2_PIN, 500, 2400);
 
-  // Sensor
-  pinMode(TRIGGER_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(LDR_PIN, INPUT);
 
   // WiFi
-  Serial.print("Conectando ao WiFi");
   WiFi.begin(SSID, PASS);
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(400);
-  }
+  while (WiFi.status() != WL_CONNECTED) delay(300);
 
-  Serial.println("\nWiFi conectado!");
-
-  wifi_client.setInsecure();   // necessário para MQTTs sem certificado
+  wifi_client.setInsecure();
   mqtt.setServer(brokerURL, brokerPort);
   mqtt.setCallback(callback);
 }
 
 // ------------------- LOOP --------------------
 void loop() {
-  if (!mqtt.connected()) {
-    reconnectMQTT();
-  }
+  if (!mqtt.connected()) reconnectMQTT();
   mqtt.loop();
 
-  long distancia = readUltrasonic();
-  int luz = analogRead(LDR_PIN);
-
+  long distancia = medirDistancia();
   mqtt.publish("S3/Presenca", String(distancia).c_str());
-  mqtt.publish("S3/Iluminacao", String(luz).c_str());
 
-  Serial.print("Distancia: ");
-  Serial.print(distancia);
-  Serial.print(" cm | Luz: ");
-  Serial.println(luz);
+  bool deteccaoLocal = (distancia > 0 && distancia <= limiteDistancia);
 
-  delay(800);
+  // ATIVA se: S2 mandar 1 OU sensor local detectar
+  bool ativar = deteccaoLocal || (comandoS2 == 1);
+
+  if (ativar) {
+    servo1.write(120);
+    servo2.write(60);
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    servo1.write(0);
+    servo2.write(0);
+    digitalWrite(LED_PIN, LOW);
+  }
+
+  delay(100);
 }
